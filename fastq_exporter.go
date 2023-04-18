@@ -31,8 +31,8 @@ import (
 )
 
 const (
-	namespace = "minknow"
-	clientID  = "minknow_exporter"
+	namespace = "fastq"
+	clientID  = "fastq_exporter"
 )
 
 const (
@@ -42,42 +42,13 @@ const (
 )
 
 var (
-	topicOldestOffset                *prometheus.Desc
-	topicPartitionLeader             *prometheus.Desc
-	readCountMetric                  *prometheus.Desc
-	fractionBasecalledMetric         *prometheus.Desc
-	fractionSkippedMetric            *prometheus.Desc
-	basecalledPassReadCountMetric    *prometheus.Desc
-	basecalledFailReadCountMetric    *prometheus.Desc
-	basecalledSkippedReadCountMetric *prometheus.Desc
-	basecalledPassBasesMetric        *prometheus.Desc
-	basecalledFailBasesMetric        *prometheus.Desc
-	basecalledSamplesMetric          *prometheus.Desc
-	selectedRawSamplesMetric         *prometheus.Desc
-	selectedEventsMetric             *prometheus.Desc
-	estimatedSelectedBasesMetric     *prometheus.Desc
-	alignmentMatchesMetric           *prometheus.Desc
-	alignmentMismatchesMetric        *prometheus.Desc
-	alignmentInsertionsMetric        *prometheus.Desc
-	alignmentDeletionsMetric         *prometheus.Desc
-	alignmentCoverageMetric          *prometheus.Desc
-	biasVoltageMetric                *prometheus.Desc
-	targetTempMetric                 *prometheus.Desc
-	asicTempMetric                   *prometheus.Desc
-	heatSinkTempMetric               *prometheus.Desc
-	pendingMuxChangeMetric           *prometheus.Desc
-	inrangeMetric                    *prometheus.Desc
-	aboveMetric                      *prometheus.Desc
-	strandMetric                     *prometheus.Desc
-	unavailableMetric                *prometheus.Desc
-	belowMetric                      *prometheus.Desc
-	multipleMetric                   *prometheus.Desc
-	saturatedMetric                  *prometheus.Desc
-	goodSingleMetric                 *prometheus.Desc
-	unknownMetric                    *prometheus.Desc
-	unclassifiedMetric               *prometheus.Desc
-	unblockingMetric                 *prometheus.Desc
-	adapterMetric                    *prometheus.Desc
+	numberOfReadsMetric  *prometheus.Desc
+	nMetric              *prometheus.Desc
+	aMetric              *prometheus.Desc
+	cMetric              *prometheus.Desc
+	gMetric              *prometheus.Desc
+	tMetric              *prometheus.Desc
+	averageQualityMetric *prometheus.Desc
 )
 
 type Exporter struct {
@@ -117,7 +88,7 @@ type exporterOpts struct {
 	serverTlsCertFile        string
 	serverTlsKeyFile         string
 	tlsInsecureSkipTLSVerify bool
-	minknowVersion           string
+	fastqVersion             string
 	useZooKeeperLag          bool
 	uriZookeeper             []string
 	labels                   string
@@ -173,11 +144,11 @@ func NewExporter(opts exporterOpts, topicFilter string, groupFilter string) (*Ex
 	var zookeeperClient *kazoo.Kazoo
 	config := sarama.NewConfig()
 	config.ClientID = clientID
-	minknowVersion, err := sarama.ParseKafkaVersion(opts.minknowVersion)
+	fastqVersion, err := sarama.ParseKafkaVersion(opts.fastqVersion)
 	if err != nil {
 		return nil, err
 	}
-	config.Version = minknowVersion
+	config.Version = fastqVersion
 
 	if opts.useSASL {
 		// Convert to lowercase so that SHA512 and SHA256 is still valid
@@ -276,7 +247,7 @@ func NewExporter(opts exporterOpts, topicFilter string, groupFilter string) (*Ex
 	client, err := sarama.NewClient(opts.uri, config)
 
 	if err != nil {
-		return nil, errors.Wrap(err, "Error Init Minknow Client")
+		return nil, errors.Wrap(err, "Error Init Fastq Client")
 	}
 
 	klog.V(TRACE).Infoln("Done Init Clients")
@@ -311,45 +282,16 @@ func NewExporter(opts exporterOpts, topicFilter string, groupFilter string) (*Ex
 //	return 0
 //}
 
-// Describe describes all the metrics ever exported by the Minknow exporter. It
+// Describe describes all the metrics ever exported by the Fastq exporter. It
 // implements prometheus.Collector.
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
-	ch <- topicOldestOffset
-	ch <- topicPartitionLeader
-	ch <- readCountMetric
-	ch <- fractionBasecalledMetric
-	ch <- fractionSkippedMetric
-	ch <- basecalledPassReadCountMetric
-	ch <- basecalledFailReadCountMetric
-	ch <- basecalledSkippedReadCountMetric
-	ch <- basecalledPassBasesMetric
-	ch <- basecalledFailBasesMetric
-	ch <- basecalledSamplesMetric
-	ch <- selectedRawSamplesMetric
-	ch <- selectedEventsMetric
-	ch <- estimatedSelectedBasesMetric
-	ch <- alignmentMatchesMetric
-	ch <- alignmentMismatchesMetric
-	ch <- alignmentInsertionsMetric
-	ch <- alignmentDeletionsMetric
-	ch <- alignmentCoverageMetric
-	ch <- biasVoltageMetric
-	ch <- targetTempMetric
-	ch <- asicTempMetric
-	ch <- heatSinkTempMetric
-	ch <- pendingMuxChangeMetric
-	ch <- inrangeMetric
-	ch <- aboveMetric
-	ch <- strandMetric
-	ch <- unavailableMetric
-	ch <- belowMetric
-	ch <- multipleMetric
-	ch <- saturatedMetric
-	ch <- goodSingleMetric
-	ch <- unknownMetric
-	ch <- unclassifiedMetric
-	ch <- unblockingMetric
-	ch <- adapterMetric
+	ch <- numberOfReadsMetric
+	ch <- nMetric
+	ch <- aMetric
+	ch <- cMetric
+	ch <- gMetric
+	ch <- tMetric
+	ch <- averageQualityMetric
 }
 
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
@@ -401,315 +343,118 @@ func (e *Exporter) collectChans(quit chan struct{}) {
 	e.sgMutex.Unlock()
 }
 
-type sequencingPositionsData struct {
-	Address string `json:'address'`
-	Name    string `json:'name'`
-	State   string `json:'state'`
-}
-
-type currentAcquisitionRunData struct {
-	Address                       string `json:'address'`
-	Name                          string `json:'name'`
-	Seconds                       string `json:'seconds'`
-	Read_count                    string `json:'read_count'`
-	Fraction_basecalled           string `json:'fraction_basecalled'`
-	Fraction_skipped              string `json:'fraction_skipped'`
-	Basecalled_pass_read_count    string `json:'basecalled_pass_read_count'`
-	Basecalled_fail_read_count    string `json:'basecalled_fail_read_count'`
-	Basecalled_skipped_read_count string `json:'basecalled_skipped_read_count'`
-	Basecalled_pass_bases         string `json:'basecalled_pass_bases'`
-	Basecalled_fail_bases         string `json:'basecalled_fail_bases'`
-	Basecalled_samples            string `json:'basecalled_samples'`
-	Selected_raw_samples          string `json:'selected_raw_samples'`
-	Selected_events               string `json:'selected_events'`
-	Estimated_selected_bases      string `json:'estimated_selected_bases'`
-	Alignment_matches             string `json:'alignment_matches'`
-	Alignment_mismatches          string `json:'alignment_mismatches'`
-	Alignment_insertions          string `json:'alignment_insertions'`
-	Alignment_deletions           string `json:'alignment_deletions'`
-	Alignment_coverage            string `json:'alignment_coverage'`
-}
-
-type voltageData struct {
-	Address      string `json:'address'`
-	Name         string `json:'name'`
-	Bias_voltage string `json:'bias_voltage'`
-}
-
-type temperatureData struct {
-	Address        string `json:'address'`
-	Name           string `json:'name'`
-	Target_temp    string `json:'target_temp'`
-	Asic_temp      string `json:'asic_temp'`
-	Heat_sink_temp string `json:'heat_sink_temp'`
-}
-
-type channelStatesData struct {
-	Address            string `json:'address'`
-	Name               string `json:'name'`
-	Pending_mux_change string `json:'pending_mux_change'`
-	Inrange            string `json:'inrange'`
-	Above              string `json:'above'`
-	Strand             string `json:'strand'`
-	Unavailable        string `json:'unavailable'`
-	Below              string `json:'below'`
-	Multiple           string `json:'multiple'`
-	Saturated          string `json:'saturated'`
-	Good_single        string `json:'good_single'`
-	Unknown            string `json:'unknown'`
-	Unclassified       string `json:'unclassified'`
-	Unblocking         string `json:'unblocking'`
-	Adapter            string `json:'adapter'`
+type statisticsData struct {
+	NumberOfReads  string `json:'numberOfReads'`
+	NumberOfN      string `json:'numberOfN'`
+	NumberOfA      string `json:'numberOfA'`
+	NumberOfC      string `json:'numberOfC'`
+	NumberOfG      string `json:'numberOfG'`
+	NumberOfT      string `json:'numberOfT'`
+	AverageQuality string `json:'averageQuality'`
+	IsPass         string `json:'isPass'`
+	FileSize       string `json:'fileSize'`
+	Read           string `json:'read'`
+	RunId          string `json:'runId'`
+	Channel        string `json:'channel'`
+	StartTime      string `json:'startTime'`
 }
 
 func (e *Exporter) collect(ch chan<- prometheus.Metric) {
-	var sequencingPositions []*sequencingPositionsData
-	result, err := exec.Command("python3", "python/list_sequencing_positions.py").Output()
+	numberOfReadsMap := make(map[string]int)
+	numberOfNMap := make(map[string]int)
+	numberOfAMap := make(map[string]int)
+	numberOfCMap := make(map[string]int)
+	numberOfGMap := make(map[string]int)
+	numberOfTMap := make(map[string]int)
+	averageQualityMap := make(map[string]int)
+
+	var statistics []*statisticsData
+	result, err := exec.Command("python3", "python/parse_fastq_file.py", "--path", "/home/wiktor/fastq_exporter/tests/data/guppy/fastq_runid_92adfe6c28fdade45a48301283563690e8f03344_0.fastq").Output()
 	if err != nil {
 		log.Fatal(err)
 	}
-	err = json.Unmarshal([]byte(result), &sequencingPositions)
+	err = json.Unmarshal([]byte(result), &statistics)
 	if err != nil {
 		log.Fatal(err)
 	}
-	for _, flowCell := range sequencingPositions {
-		ch <- prometheus.MustNewConstMetric(
-			topicOldestOffset, prometheus.GaugeValue, float64(1), flowCell.Address, flowCell.Name, flowCell.State,
-		)
+	for _, statistic := range statistics {
+		NumberOfReads, _ := strconv.Atoi(statistic.NumberOfReads)
+		NumberOfN, _ := strconv.Atoi(statistic.NumberOfN)
+		NumberOfA, _ := strconv.Atoi(statistic.NumberOfA)
+		NumberOfC, _ := strconv.Atoi(statistic.NumberOfC)
+		NumberOfG, _ := strconv.Atoi(statistic.NumberOfG)
+		NumberOfT, _ := strconv.Atoi(statistic.NumberOfT)
+		AverageQuality, _ := strconv.Atoi(statistic.AverageQuality)
+		if _, ok := numberOfReadsMap[statistic.Channel]; ok {
+			numberOfReadsMap[statistic.Channel] += NumberOfReads
+		} else {
+			numberOfReadsMap[statistic.Channel] = NumberOfReads
+		}
+		if _, ok := numberOfNMap[statistic.Channel]; ok {
+			numberOfNMap[statistic.Channel] += NumberOfN
+		} else {
+			numberOfNMap[statistic.Channel] = NumberOfN
+		}
+		if _, ok := numberOfAMap[statistic.Channel]; ok {
+			numberOfAMap[statistic.Channel] += NumberOfA
+		} else {
+			numberOfAMap[statistic.Channel] = NumberOfA
+		}
+		if _, ok := numberOfCMap[statistic.Channel]; ok {
+			numberOfCMap[statistic.Channel] += NumberOfC
+		} else {
+			numberOfCMap[statistic.Channel] = NumberOfC
+		}
+		if _, ok := numberOfGMap[statistic.Channel]; ok {
+			numberOfGMap[statistic.Channel] += NumberOfG
+		} else {
+			numberOfGMap[statistic.Channel] = NumberOfG
+		}
+		if _, ok := numberOfTMap[statistic.Channel]; ok {
+			numberOfTMap[statistic.Channel] += NumberOfT
+		} else {
+			numberOfTMap[statistic.Channel] = NumberOfT
+		}
+		if _, ok := averageQualityMap[statistic.Channel]; ok {
+			averageQualityMap[statistic.Channel] += AverageQuality  // this is error, bacause average cant be summed
+		} else {
+			averageQualityMap[statistic.Channel] = AverageQuality
+		}
 	}
 
-	var currentAcquisitionRun []*currentAcquisitionRunData
-	result2, err2 := exec.Command("python3", "python/get_current_acquisition_run.py").Output()
-	if err2 != nil {
-		log.Fatal(err2)
-	}
-	err2 = json.Unmarshal([]byte(result2), &currentAcquisitionRun)
-	if err2 != nil {
-		log.Fatal(err2)
-	}
-	for _, statistic := range currentAcquisitionRun {
-		Read_count, _ := strconv.Atoi(statistic.Read_count)
-		Fraction_basecalled, _ := strconv.Atoi(statistic.Fraction_basecalled)
-		Fraction_skipped, _ := strconv.Atoi(statistic.Fraction_skipped)
-		Basecalled_pass_read_count, _ := strconv.Atoi(statistic.Basecalled_pass_read_count)
-		Basecalled_fail_read_count, _ := strconv.Atoi(statistic.Basecalled_fail_read_count)
-		Basecalled_skipped_read_count, _ := strconv.Atoi(statistic.Basecalled_skipped_read_count)
-		Basecalled_pass_bases, _ := strconv.Atoi(statistic.Basecalled_pass_bases)
-		Basecalled_fail_bases, _ := strconv.Atoi(statistic.Basecalled_fail_bases)
-		Basecalled_samples, _ := strconv.Atoi(statistic.Basecalled_samples)
-		Selected_raw_samples, _ := strconv.Atoi(statistic.Selected_raw_samples)
-		Selected_events, _ := strconv.Atoi(statistic.Selected_events)
-		Estimated_selected_bases, _ := strconv.Atoi(statistic.Estimated_selected_bases)
-		Alignment_matches, _ := strconv.Atoi(statistic.Alignment_matches)
-		Alignment_mismatches, _ := strconv.Atoi(statistic.Alignment_mismatches)
-		Alignment_insertions, _ := strconv.Atoi(statistic.Alignment_insertions)
-		Alignment_deletions, _ := strconv.Atoi(statistic.Alignment_deletions)
-		Alignment_coverage, _ := strconv.Atoi(statistic.Alignment_coverage)
+	for key, element := range numberOfReadsMap {
 		ch <- prometheus.MustNewConstMetric(
-			readCountMetric, prometheus.GaugeValue, float64(Read_count),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			fractionBasecalledMetric, prometheus.GaugeValue, float64(Fraction_basecalled),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			fractionSkippedMetric, prometheus.GaugeValue, float64(Fraction_skipped),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			basecalledPassReadCountMetric, prometheus.GaugeValue, float64(Basecalled_pass_read_count),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			basecalledFailReadCountMetric, prometheus.GaugeValue, float64(Basecalled_fail_read_count),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			basecalledSkippedReadCountMetric, prometheus.GaugeValue, float64(Basecalled_skipped_read_count),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			basecalledPassBasesMetric, prometheus.GaugeValue, float64(Basecalled_pass_bases),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			basecalledFailBasesMetric, prometheus.GaugeValue, float64(Basecalled_fail_bases),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			basecalledSamplesMetric, prometheus.GaugeValue, float64(Basecalled_samples),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			selectedRawSamplesMetric, prometheus.GaugeValue, float64(Selected_raw_samples),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			selectedEventsMetric, prometheus.GaugeValue, float64(Selected_events),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			estimatedSelectedBasesMetric, prometheus.GaugeValue, float64(Estimated_selected_bases),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			alignmentMatchesMetric, prometheus.GaugeValue, float64(Alignment_matches),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			alignmentMismatchesMetric, prometheus.GaugeValue, float64(Alignment_mismatches),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			alignmentInsertionsMetric, prometheus.GaugeValue, float64(Alignment_insertions),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			alignmentDeletionsMetric, prometheus.GaugeValue, float64(Alignment_deletions),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			alignmentCoverageMetric, prometheus.GaugeValue, float64(Alignment_coverage),
-			statistic.Address,
-			statistic.Name,
-			statistic.Seconds,
+			numberOfReadsMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
 		)
 	}
-
-	var voltage []*voltageData
-	result3, err3 := exec.Command("python3", "python/get_voltage.py").Output()
-	if err3 != nil {
-		log.Fatal(err3)
-	}
-	err3 = json.Unmarshal([]byte(result3), &voltage)
-	if err3 != nil {
-		log.Fatal(err3)
-	}
-	for _, v := range voltage {
-		Bias_voltage, _ := strconv.ParseFloat(v.Bias_voltage, 64)
+	for key, element := range numberOfNMap {
 		ch <- prometheus.MustNewConstMetric(
-			biasVoltageMetric, prometheus.GaugeValue, float64(Bias_voltage), v.Address, v.Name,
+			nMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
 		)
 	}
-
-	var temperature []*temperatureData
-	result4, err4 := exec.Command("python3", "python/get_temperature.py").Output()
-	if err4 != nil {
-		log.Fatal(err4)
-	}
-	err4 = json.Unmarshal([]byte(result4), &temperature)
-	if err4 != nil {
-		log.Fatal(err4)
-	}
-	for _, t := range temperature {
-		Target_temp, _ := strconv.ParseFloat(t.Target_temp, 64)
-		Asic_temp, _ := strconv.ParseFloat(t.Asic_temp, 64)
-		Heat_sink_temp, _ := strconv.ParseFloat(t.Heat_sink_temp, 64)
+	for key, element := range numberOfAMap {
 		ch <- prometheus.MustNewConstMetric(
-			targetTempMetric, prometheus.GaugeValue, float64(Target_temp), t.Address, t.Name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			asicTempMetric, prometheus.GaugeValue, float64(Asic_temp), t.Address, t.Name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			heatSinkTempMetric, prometheus.GaugeValue, float64(Heat_sink_temp), t.Address, t.Name,
+			aMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
 		)
 	}
-
-	var channelStates []*channelStatesData
-	result5, err5 := exec.Command("python3", "python/get_channel_states.py").Output()
-	if err5 != nil {
-		log.Fatal(err5)
+	for key, element := range numberOfCMap {
+		ch <- prometheus.MustNewConstMetric(
+			cMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
+		)
 	}
-	err5 = json.Unmarshal([]byte(result5), &channelStates)
-	if err5 != nil {
-		log.Fatal(err5)
+	for key, element := range numberOfGMap {
+		ch <- prometheus.MustNewConstMetric(
+			gMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
+		)
 	}
-	for _, s := range channelStates {
-		Pending_mux_change, _ := strconv.Atoi(s.Pending_mux_change)
-		Inrange, _ := strconv.Atoi(s.Inrange)
-		Above, _ := strconv.Atoi(s.Above)
-		Strand, _ := strconv.Atoi(s.Strand)
-		Unavailable, _ := strconv.Atoi(s.Unavailable)
-		Below, _ := strconv.Atoi(s.Below)
-		Multiple, _ := strconv.Atoi(s.Multiple)
-		Saturated, _ := strconv.Atoi(s.Saturated)
-		Good_single, _ := strconv.Atoi(s.Good_single)
-		Unknown, _ := strconv.Atoi(s.Unknown)
-		Unclassified, _ := strconv.Atoi(s.Unclassified)
-		Unblocking, _ := strconv.Atoi(s.Unblocking)
-		Adapter, _ := strconv.Atoi(s.Adapter)
+	for key, element := range numberOfTMap {
 		ch <- prometheus.MustNewConstMetric(
-			pendingMuxChangeMetric, prometheus.GaugeValue, float64(Pending_mux_change), s.Address, s.Name,
+			tMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
 		)
+	}
+	for key, element := range averageQualityMap {
 		ch <- prometheus.MustNewConstMetric(
-			inrangeMetric, prometheus.GaugeValue, float64(Inrange), s.Address, s.Name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			aboveMetric, prometheus.GaugeValue, float64(Above), s.Address, s.Name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			strandMetric, prometheus.GaugeValue, float64(Strand), s.Address, s.Name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			unavailableMetric, prometheus.GaugeValue, float64(Unavailable), s.Address, s.Name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			belowMetric, prometheus.GaugeValue, float64(Below), s.Address, s.Name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			multipleMetric, prometheus.GaugeValue, float64(Multiple), s.Address, s.Name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			saturatedMetric, prometheus.GaugeValue, float64(Saturated), s.Address, s.Name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			goodSingleMetric, prometheus.GaugeValue, float64(Good_single), s.Address, s.Name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			unknownMetric, prometheus.GaugeValue, float64(Unknown), s.Address, s.Name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			unclassifiedMetric, prometheus.GaugeValue, float64(Unclassified), s.Address, s.Name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			unblockingMetric, prometheus.GaugeValue, float64(Unblocking), s.Address, s.Name,
-		)
-		ch <- prometheus.MustNewConstMetric(
-			adapterMetric, prometheus.GaugeValue, float64(Adapter), s.Address, s.Name,
+			averageQualityMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
 		)
 	}
 
@@ -731,18 +476,11 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 				topicOldestOffset, prometheus.GaugeValue, float64(1), file.Name(),
 			)
 		}*/
-
-	/*for _, file := range files {
-		fmt.Printf("%#v", file)
-		ch <- prometheus.MustNewConstMetric(
-			clusterBrokers, prometheus.GaugeValue, float64(len(files)),
-		)
-	}*/
 }
 
 func init() {
 	metrics.UseNilMetrics = true
-	prometheus.MustRegister(version.NewCollector("minknow_exporter"))
+	prometheus.MustRegister(version.NewCollector("fastq_exporter"))
 }
 
 func toFlagString(name string, help string, value string) *string {
@@ -778,7 +516,7 @@ func toFlagIntVar(name string, help string, value int, valueString string, targe
 func main() {
 	var (
 		ontFast5DirPath = toFlagString("ont-fast5-dir-path", "Path to the dir where fast5 from ONT sequencer will be stored.", "/tmp")
-		listenAddress   = toFlagString("web.listen-address", "Address to listen on for web interface and telemetry.", ":9309")
+		listenAddress   = toFlagString("web.listen-address", "Address to listen on for web interface and telemetry.", ":9308")
 		metricsPath     = toFlagString("web.telemetry-path", "Path under which to expose metrics.", "/metrics")
 		topicFilter     = toFlagString("topic.filter", "Regex that determines which topics to collect.", ".*")
 		groupFilter     = toFlagString("group.filter", "Regex that determines which consumer groups to collect.", ".*")
@@ -787,9 +525,9 @@ func main() {
 		opts = exporterOpts{}
 	)
 
-	toFlagStringsVar("minknow.server", "Address (host:port) of minknow server.", "minknow:9092", &opts.uri)
+	toFlagStringsVar("fastq.server", "Address (host:port) of fastq server.", "fastq:9092", &opts.uri)
 	toFlagBoolVar("sasl.enabled", "Connect using SASL/PLAIN, default is false.", false, "false", &opts.useSASL)
-	toFlagBoolVar("sasl.handshake", "Only set this to false if using a non-minknow SASL proxy, default is true.", true, "true", &opts.useSASLHandshake)
+	toFlagBoolVar("sasl.handshake", "Only set this to false if using a non-fastq SASL proxy, default is true.", true, "true", &opts.useSASLHandshake)
 	toFlagStringVar("sasl.username", "SASL user name.", "", &opts.saslUsername)
 	toFlagStringVar("sasl.password", "SASL user password.", "", &opts.saslPassword)
 	toFlagStringVar("sasl.mechanism", "The SASL SCRAM SHA algorithm sha256 or sha512 or gssapi as mechanism", "", &opts.saslMechanism)
@@ -799,31 +537,31 @@ func main() {
 	toFlagStringVar("sasl.kerberos-auth-type", "Kerberos auth type. Either 'keytabAuth' or 'userAuth'", "", &opts.kerberosAuthType)
 	toFlagStringVar("sasl.keytab-path", "Kerberos keytab file path", "", &opts.keyTabPath)
 	toFlagBoolVar("sasl.disable-PA-FX-FAST", "Configure the Kerberos client to not use PA_FX_FAST, default is false.", false, "false", &opts.saslDisablePAFXFast)
-	toFlagBoolVar("tls.enabled", "Connect to minknow using TLS, default is false.", false, "false", &opts.useTLS)
-	toFlagStringVar("tls.server-name", "Used to verify the hostname on the returned certificates unless tls.insecure-skip-tls-verify is given. The minknow server's name should be given.", "", &opts.tlsServerName)
-	toFlagStringVar("tls.ca-file", "The optional certificate authority file for minknow TLS client authentication.", "", &opts.tlsCAFile)
-	toFlagStringVar("tls.cert-file", "The optional certificate file for minknow client authentication.", "", &opts.tlsCertFile)
-	toFlagStringVar("tls.key-file", "The optional key file for minknow client authentication.", "", &opts.tlsKeyFile)
+	toFlagBoolVar("tls.enabled", "Connect to fastq using TLS, default is false.", false, "false", &opts.useTLS)
+	toFlagStringVar("tls.server-name", "Used to verify the hostname on the returned certificates unless tls.insecure-skip-tls-verify is given. The fastq server's name should be given.", "", &opts.tlsServerName)
+	toFlagStringVar("tls.ca-file", "The optional certificate authority file for fastq TLS client authentication.", "", &opts.tlsCAFile)
+	toFlagStringVar("tls.cert-file", "The optional certificate file for fastq client authentication.", "", &opts.tlsCertFile)
+	toFlagStringVar("tls.key-file", "The optional key file for fastq client authentication.", "", &opts.tlsKeyFile)
 	toFlagBoolVar("server.tls.enabled", "Enable TLS for web server, default is false.", false, "false", &opts.serverUseTLS)
 	toFlagBoolVar("server.tls.mutual-auth-enabled", "Enable TLS client mutual authentication, default is false.", false, "false", &opts.serverMutualAuthEnabled)
 	toFlagStringVar("server.tls.ca-file", "The certificate authority file for the web server.", "", &opts.serverTlsCAFile)
 	toFlagStringVar("server.tls.cert-file", "The certificate file for the web server.", "", &opts.serverTlsCertFile)
 	toFlagStringVar("server.tls.key-file", "The key file for the web server.", "", &opts.serverTlsKeyFile)
 	toFlagBoolVar("tls.insecure-skip-tls-verify", "If true, the server's certificate will not be checked for validity. This will make your HTTPS connections insecure. Default is false", false, "false", &opts.tlsInsecureSkipTLSVerify)
-	toFlagStringVar("minknow.version", "Minknow version", sarama.V2_0_0_0.String(), &opts.minknowVersion)
+	toFlagStringVar("fastq.version", "Fastq version", sarama.V2_0_0_0.String(), &opts.fastqVersion)
 	toFlagBoolVar("use.consumelag.zookeeper", "if you need to use a group from zookeeper, default is false", false, "false", &opts.useZooKeeperLag)
 	toFlagStringsVar("zookeeper.server", "Address (hosts) of zookeeper server.", "localhost:2181", &opts.uriZookeeper)
-	toFlagStringVar("minknow.labels", "minknow cluster name", "", &opts.labels)
+	toFlagStringVar("fastq.labels", "fastq cluster name", "", &opts.labels)
 	toFlagStringVar("refresh.metadata", "Metadata refresh interval", "30s", &opts.metadataRefreshInterval)
 	toFlagBoolVar("offset.show-all", "Whether show the offset/lag for all consumer group, otherwise, only show connected consumer groups, default is true", true, "true", &opts.offsetShowAll)
-	toFlagBoolVar("concurrent.enable", "If true, all scrapes will trigger minknow operations otherwise, they will share results. WARN: This should be disabled on large clusters. Default is false", false, "false", &opts.allowConcurrent)
+	toFlagBoolVar("concurrent.enable", "If true, all scrapes will trigger fastq operations otherwise, they will share results. WARN: This should be disabled on large clusters. Default is false", false, "false", &opts.allowConcurrent)
 	toFlagIntVar("topic.workers", "Number of topic workers", 100, "100", &opts.topicWorkers)
-	toFlagBoolVar("minknow.allow-auto-topic-creation", "If true, the broker may auto-create topics that we requested which do not already exist, default is false.", false, "false", &opts.allowAutoTopicCreation)
+	toFlagBoolVar("fastq.allow-auto-topic-creation", "If true, the broker may auto-create topics that we requested which do not already exist, default is false.", false, "false", &opts.allowAutoTopicCreation)
 	toFlagIntVar("verbosity", "Verbosity log level", 0, "0", &opts.verbosityLogLevel)
 
 	plConfig := plog.Config{}
 	plogflag.AddFlags(kingpin.CommandLine, &plConfig)
-	kingpin.Version(version.Print("minknow_exporter"))
+	kingpin.Version(version.Print("fastq_exporter"))
 	kingpin.HelpFlag.Short('h')
 	kingpin.Parse()
 
@@ -861,328 +599,43 @@ func setup(
 	}
 	defer klog.Flush()
 
-	klog.V(INFO).Infoln("Starting minknow_exporter", version.Info())
+	klog.V(INFO).Infoln("Starting fastq_exporter", version.Info())
 	klog.V(DEBUG).Infoln("Build context", version.BuildContext())
 
-	topicOldestOffset = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "flowcell", "info"),
-		"Flowcell info",
-		[]string{"address", "name", "state"}, labels,
-	)
-	readCountMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "read_count"),
+	numberOfReadsMetric = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, "amount", "reads"),
 		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
+		[]string{"address", "name", "channel"}, labels,
 	)
-	fractionBasecalledMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "fraction_basecalled"),
+	nMetric = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, "amount", "N"),
 		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
+		[]string{"address", "name", "channel"}, labels,
 	)
-	fractionSkippedMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "fraction_skipped"),
+	aMetric = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, "amount", "A"),
 		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
+		[]string{"address", "name", "channel"}, labels,
 	)
-	basecalledPassReadCountMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "basecalled_pass_read_count"),
+	cMetric = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, "amount", "C"),
 		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
+		[]string{"address", "name", "channel"}, labels,
 	)
-	basecalledFailReadCountMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "basecalled_fail_read_count"),
+	gMetric = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, "amount", "G"),
 		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
+		[]string{"address", "name", "channel"}, labels,
 	)
-	basecalledSkippedReadCountMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "basecalled_skipped_read_count"),
+	tMetric = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, "amount", "T"),
 		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
+		[]string{"address", "name", "channel"}, labels,
 	)
-	basecalledPassBasesMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "basecalled_pass_bases"),
+	averageQualityMetric = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, "average", "quality"),
 		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
-	)
-	basecalledFailBasesMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "basecalled_fail_bases"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
-	)
-	basecalledSamplesMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "basecalled_samples"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
-	)
-	selectedRawSamplesMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "selected_raw_samples"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
-	)
-	selectedEventsMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "selected_events"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
-	)
-	estimatedSelectedBasesMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "estimated_selected_bases"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
-	)
-	alignmentMatchesMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "alignment_matches"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
-	)
-	alignmentMismatchesMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "alignment_mismatches"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
-	)
-	alignmentInsertionsMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "alignment_insertions"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
-	)
-	alignmentDeletionsMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "alignment_deletions"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
-	)
-	alignmentCoverageMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "alignment_coverage"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-		}, labels,
-	)
-	topicPartitionLeader = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "stats"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-			"seconds",
-			"read_count",
-			"fraction_basecalled",
-			"fraction_skipped",
-			"basecalled_pass_read_count",
-			"basecalled_fail_read_count",
-			"basecalled_skipped_read_count",
-			"basecalled_pass_bases",
-			"basecalled_fail_bases",
-			"basecalled_samples",
-			"selected_raw_samples",
-			"selected_events",
-			"estimated_selected_bases",
-			"alignment_matches",
-			"alignment_mismatches",
-			"alignment_insertions",
-			"alignment_deletions",
-			"alignment_coverage",
-		}, labels,
-	)
-	biasVoltageMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "bias_voltage"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	targetTempMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "target_temp"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	asicTempMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "asic_temp"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	heatSinkTempMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "heat_sink_temp"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	pendingMuxChangeMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "pending_mux_change"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	inrangeMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "inrange"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	aboveMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "above"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	strandMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "strand"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	unavailableMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "unavailable"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	belowMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "below"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	multipleMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "multiple"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	saturatedMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "saturated"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	goodSingleMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "good_single"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	unknownMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "unknown"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	unclassifiedMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "unclassified"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	unblockingMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "unblocking"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
-	)
-	adapterMetric = prometheus.NewDesc(
-		prometheus.BuildFQName(namespace, "", "adapter"),
-		"Stats",
-		[]string{
-			"address",
-			"name",
-		}, labels,
+		[]string{"address", "name", "channel"}, labels,
 	)
 
 	if logSarama {
@@ -1199,9 +652,9 @@ func setup(
 	http.Handle(metricsPath, promhttp.Handler())
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		_, err := w.Write([]byte(`<html>
-		        <head><title>Minknow Exporter</title></head>
+		        <head><title>Fastq Exporter</title></head>
 		        <body>
-		        <h1>Minknow Exporter</h1>
+		        <h1>Fastq Exporter</h1>
 		        <p><a href='` + metricsPath + `'>Metrics</a></p>
 		        </body>
 		        </html>`))
