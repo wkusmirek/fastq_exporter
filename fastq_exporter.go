@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -42,6 +43,7 @@ const (
 )
 
 var (
+	totalSizeMetric      *prometheus.Desc
 	numberOfReadsMetric  *prometheus.Desc
 	nMetric              *prometheus.Desc
 	aMetric              *prometheus.Desc
@@ -50,6 +52,16 @@ var (
 	tMetric              *prometheus.Desc
 	averageQualityMetric *prometheus.Desc
 )
+
+var filenameSizeMap = make(map[string]int64)
+
+var numberOfReadsMap = make(map[string]int)
+var numberOfNMap = make(map[string]int)
+var numberOfAMap = make(map[string]int)
+var numberOfCMap = make(map[string]int)
+var numberOfGMap = make(map[string]int)
+var numberOfTMap = make(map[string]int)
+var averageQualityMap = make(map[string]int)
 
 type Exporter struct {
 	client                  sarama.Client
@@ -285,6 +297,7 @@ func NewExporter(opts exporterOpts, topicFilter string, groupFilter string) (*Ex
 // Describe describes all the metrics ever exported by the Fastq exporter. It
 // implements prometheus.Collector.
 func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
+	ch <- totalSizeMetric
 	ch <- numberOfReadsMetric
 	ch <- nMetric
 	ch <- aMetric
@@ -360,16 +373,76 @@ type statisticsData struct {
 }
 
 func (e *Exporter) collect(ch chan<- prometheus.Metric) {
-	numberOfReadsMap := make(map[string]int)
-	numberOfNMap := make(map[string]int)
-	numberOfAMap := make(map[string]int)
-	numberOfCMap := make(map[string]int)
-	numberOfGMap := make(map[string]int)
-	numberOfTMap := make(map[string]int)
-	averageQualityMap := make(map[string]int)
+	filepath.Walk("/tmp", func(path string, info os.FileInfo, err error) error {
+		if filepath.Ext(path) == ".fastq" {
+			if _, ok := filenameSizeMap[path]; ok {
+				if filenameSizeMap[path] == info.Size() {
+					//continue
+				} else {
+					filenameSizeMap[path] = info.Size()
+					e.run(path)
+				}
 
+			} else {
+				filenameSizeMap[path] = info.Size()
+				e.run(path)
+			}
+		}
+
+		if err != nil {
+			fmt.Println("ERROR:", err)
+		}
+		return nil
+	})
+
+	var totalSize = 0
+	for _, element := range filenameSizeMap {
+		totalSize += int(element)
+	}
+	ch <- prometheus.MustNewConstMetric(
+		totalSizeMetric, prometheus.GaugeValue, float64(totalSize), "address", "name",
+	)
+
+	for key, element := range numberOfReadsMap {
+		ch <- prometheus.MustNewConstMetric(
+			numberOfReadsMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
+		)
+	}
+	for key, element := range numberOfNMap {
+		ch <- prometheus.MustNewConstMetric(
+			nMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
+		)
+	}
+	for key, element := range numberOfAMap {
+		ch <- prometheus.MustNewConstMetric(
+			aMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
+		)
+	}
+	for key, element := range numberOfCMap {
+		ch <- prometheus.MustNewConstMetric(
+			cMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
+		)
+	}
+	for key, element := range numberOfGMap {
+		ch <- prometheus.MustNewConstMetric(
+			gMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
+		)
+	}
+	for key, element := range numberOfTMap {
+		ch <- prometheus.MustNewConstMetric(
+			tMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
+		)
+	}
+	for key, element := range averageQualityMap {
+		ch <- prometheus.MustNewConstMetric(
+			averageQualityMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
+		)
+	}
+}
+
+func (e *Exporter) run(path string) {
 	var statistics []*statisticsData
-	result, err := exec.Command("python3", "python/parse_fastq_file.py", "--path", "/home/wiktor/fastq_exporter/tests/data/guppy/fastq_runid_92adfe6c28fdade45a48301283563690e8f03344_0.fastq").Output()
+	result, err := exec.Command("python3", "python/parse_fastq_file.py", "--path", path).Output()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -416,66 +489,11 @@ func (e *Exporter) collect(ch chan<- prometheus.Metric) {
 			numberOfTMap[statistic.Channel] = NumberOfT
 		}
 		if _, ok := averageQualityMap[statistic.Channel]; ok {
-			averageQualityMap[statistic.Channel] += AverageQuality  // this is error, bacause average cant be summed
+			averageQualityMap[statistic.Channel] += AverageQuality // this is error, bacause average cant be summed
 		} else {
 			averageQualityMap[statistic.Channel] = AverageQuality
 		}
 	}
-
-	for key, element := range numberOfReadsMap {
-		ch <- prometheus.MustNewConstMetric(
-			numberOfReadsMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
-		)
-	}
-	for key, element := range numberOfNMap {
-		ch <- prometheus.MustNewConstMetric(
-			nMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
-		)
-	}
-	for key, element := range numberOfAMap {
-		ch <- prometheus.MustNewConstMetric(
-			aMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
-		)
-	}
-	for key, element := range numberOfCMap {
-		ch <- prometheus.MustNewConstMetric(
-			cMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
-		)
-	}
-	for key, element := range numberOfGMap {
-		ch <- prometheus.MustNewConstMetric(
-			gMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
-		)
-	}
-	for key, element := range numberOfTMap {
-		ch <- prometheus.MustNewConstMetric(
-			tMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
-		)
-	}
-	for key, element := range averageQualityMap {
-		ch <- prometheus.MustNewConstMetric(
-			averageQualityMetric, prometheus.GaugeValue, float64(element), "address", "name", key,
-		)
-	}
-
-	/*
-		files, _ := ioutil.ReadDir("/tmp/fast5")
-		for _, file := range files {
-			var vars map[string]interface{}
-			result, err := exec.Command("python3", "python/parse_ont_fast5_file.py", "/tmp/fast5/"+file.Name()).Output()
-			if err != nil {
-				log.Fatal(err)
-			}
-			err = json.Unmarshal(result, &vars)
-			if err != nil {
-				log.Fatal(err)
-			}
-			//fmt.Printf("%#v", vars)
-
-			ch <- prometheus.MustNewConstMetric(
-				topicOldestOffset, prometheus.GaugeValue, float64(1), file.Name(),
-			)
-		}*/
 }
 
 func init() {
@@ -602,6 +620,11 @@ func setup(
 	klog.V(INFO).Infoln("Starting fastq_exporter", version.Info())
 	klog.V(DEBUG).Infoln("Build context", version.BuildContext())
 
+	totalSizeMetric = prometheus.NewDesc(
+		prometheus.BuildFQName(namespace, "total", "size"),
+		"Stats",
+		[]string{"address", "name"}, labels,
+	)
 	numberOfReadsMetric = prometheus.NewDesc(
 		prometheus.BuildFQName(namespace, "amount", "reads"),
 		"Stats",
