@@ -7,6 +7,8 @@ ARG BIN_DIR=.
 RUN apt-get update
 RUN apt-get install -y python3 pip
 
+RUN pip3 install numpy
+
 COPY ${BIN_DIR}/fastq_exporter /fastq_exporter
 COPY ${BIN_DIR}/python /python
 
